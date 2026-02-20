@@ -79,7 +79,7 @@ jobs:
                 "ElasticApm__Enabled=${{ vars.ELASTIC_APM_ENABLED }}" \
                 "ElasticApm__ServerUrl=${{ vars.ELASTIC_APM_URL }}" \
                 "ElasticApm__SecretToken=${{ secrets.ELASTIC_APM_TOKEN }}" \
-                "ElasticApm__ServiceName=${{ vars.ELASTIC_APM_SERVICE_NAME }}" \
+                "ElasticApm__ServiceName=${{ vars.SERVICE_NAME }}" \
                 "ElasticApm__Environment=${{ vars.ENV }}" \
                 "ElasticLogs__Endpoint=${{ vars.ELASTIC_LOGS_ENDPOINT }}" \
                 "ElasticLogs__ApiKey=${{ secrets.ELASTIC_LOGS_API_KEY }}" \
@@ -168,7 +168,7 @@ jobs:
                 "ElasticApm__Enabled=${{ vars.ELASTIC_APM_ENABLED }}" \
                 "ElasticApm__ServerUrl=${{ vars.ELASTIC_APM_URL }}" \
                 "ElasticApm__SecretToken=${{ secrets.ELASTIC_APM_TOKEN }}" \
-                "ElasticApm__ServiceName=${{ vars.ELASTIC_APM_SERVICE_NAME }}" \
+                "ElasticApm__ServiceName=${{ vars.SERVICE_NAME }}" \
                 "ElasticApm__Environment=${{ vars.ENV }}" \
                 "ElasticLogs__Endpoint=${{ vars.ELASTIC_LOGS_ENDPOINT }}" \
                 "ElasticLogs__ApiKey=${{ secrets.ELASTIC_LOGS_API_KEY }}" \
