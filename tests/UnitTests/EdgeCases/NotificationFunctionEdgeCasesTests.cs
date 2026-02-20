@@ -50,9 +50,7 @@ public class NotificationFunctionEdgeCasesTests
         {
             EmailTo = largeEmailList,
             Subject = "Test",
-            Body = "Test Body",
-            Metadata = new AlertMetadata { CorrelationId = correlationId }
-        };
+            Body = "Test Body",        };
 
         var message = CreateServiceBusMessage(notificationRequest, correlationId);
 
@@ -83,9 +81,7 @@ public class NotificationFunctionEdgeCasesTests
         {
             EmailTo = new List<string> { "test@test.com" },
             Subject = specialSubject,
-            Body = "Test Body",
-            Metadata = new AlertMetadata { CorrelationId = correlationId }
-        };
+            Body = "Test Body",        };
 
         var message = CreateServiceBusMessage(notificationRequest, correlationId);
 
@@ -117,9 +113,7 @@ public class NotificationFunctionEdgeCasesTests
                 { "{fieldId}", "Café São João" },
                 { "{stressLevel}", "Crítico <ALTO>" },
                 { "{correlationId}", correlationId }
-            },
-            Metadata = new AlertMetadata { CorrelationId = correlationId }
-        };
+            },        };
 
         var message = CreateServiceBusMessage(notificationRequest, correlationId);
 
@@ -151,9 +145,7 @@ public class NotificationFunctionEdgeCasesTests
         {
             EmailTo = new List<string> { "test@test.com" },
             Subject = "   ",
-            Body = "Test Body",
-            Metadata = new AlertMetadata { CorrelationId = correlationId }
-        };
+            Body = "Test Body",        };
 
         var message = CreateServiceBusMessage(notificationRequest, correlationId);
 
@@ -178,9 +170,7 @@ public class NotificationFunctionEdgeCasesTests
         {
             EmailTo = new List<string> { "test@test.com" },
             Subject = "Test",
-            Body = "   ",
-            Metadata = new AlertMetadata { CorrelationId = correlationId }
-        };
+            Body = "   ",        };
 
         var message = CreateServiceBusMessage(notificationRequest, correlationId);
 
@@ -211,9 +201,7 @@ public class NotificationFunctionEdgeCasesTests
         {
             EmailTo = new List<string> { malformedEmail },
             Subject = "Test",
-            Body = "Test Body",
-            Metadata = new AlertMetadata { CorrelationId = correlationId }
-        };
+            Body = "Test Body",        };
 
         var message = CreateServiceBusMessage(notificationRequest, correlationId);
 
@@ -244,9 +232,7 @@ public class NotificationFunctionEdgeCasesTests
                 "unique@test.com" 
             },
             Subject = "Test",
-            Body = "Test Body",
-            Metadata = new AlertMetadata { CorrelationId = correlationId }
-        };
+            Body = "Test Body",        };
 
         var message = CreateServiceBusMessage(notificationRequest, correlationId);
 
@@ -273,9 +259,7 @@ public class NotificationFunctionEdgeCasesTests
         {
             EmailTo = new List<string> { "test@test.com" },
             Subject = longSubject,
-            Body = "Test Body",
-            Metadata = new AlertMetadata { CorrelationId = correlationId }
-        };
+            Body = "Test Body",        };
 
         var message = CreateServiceBusMessage(notificationRequest, correlationId);
 
@@ -302,9 +286,7 @@ public class NotificationFunctionEdgeCasesTests
         {
             EmailTo = new List<string> { "test@test.com" },
             Subject = "Test",
-            Body = largeBody,
-            Metadata = new AlertMetadata { CorrelationId = correlationId }
-        };
+            Body = largeBody,        };
 
         var message = CreateServiceBusMessage(notificationRequest, correlationId);
 
@@ -329,9 +311,7 @@ public class NotificationFunctionEdgeCasesTests
         {
             EmailTo = new List<string> { "test@test.com" },
             TemplateId = templateId,
-            Parameters = new Dictionary<string, string>(),
-            Metadata = new AlertMetadata { CorrelationId = correlationId }
-        };
+            Parameters = new Dictionary<string, string>(),        };
 
         var message = CreateServiceBusMessage(notificationRequest, correlationId);
 
@@ -366,9 +346,7 @@ public class NotificationFunctionEdgeCasesTests
             EmailCc = new List<string> { email },
             EmailBcc = new List<string> { email },
             Subject = "Test",
-            Body = "Test Body",
-            Metadata = new AlertMetadata { CorrelationId = correlationId }
-        };
+            Body = "Test Body",        };
 
         var message = CreateServiceBusMessage(notificationRequest, correlationId);
 
@@ -397,13 +375,7 @@ public class NotificationFunctionEdgeCasesTests
         {
             EmailTo = new List<string> { "测试@test.com" },
             Subject = "テスト 测试 Тест",
-            Body = "<html>🌡️ 🔥 ⚠️ Emoji test</html>",
-            Metadata = new AlertMetadata 
-            { 
-                CorrelationId = correlationId,
-                AlertType = "Тест"
-            }
-        };
+            Body = "<html>🌡️ 🔥 ⚠️ Emoji test</html>",        };
 
         var message = CreateServiceBusMessage(notificationRequest, correlationId);
 
@@ -428,3 +400,4 @@ public class NotificationFunctionEdgeCasesTests
         );
     }
 }
+

@@ -43,24 +43,21 @@ public class NotificationRequest
     public string? Body { get; set; }
 
     /// <summary>
-    /// Alert metadata for tracking and categorization
+    /// Notification priority level (Low, Normal, High, Urgent).
+    /// Maps to SMTP headers (X-Priority, Importance) for email client display.
+    /// Default: Normal
     /// </summary>
-    public AlertMetadata Metadata { get; set; } = new();
+    [System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter))]
+    public PriorityEnum Priority { get; set; } = PriorityEnum.Normal;
 }
 
 /// <summary>
-/// Metadata for alert tracking and categorization
+/// Email priority levels for SMTP headers (X-Priority, Importance)
 /// </summary>
-public class AlertMetadata
+public enum PriorityEnum
 {
-    /// <summary>
-    /// Unique identifier for correlating this alert across systems and logs.
-    /// Should be the same CorrelationId from the original request/measurement.
-    /// </summary>
-    public string CorrelationId { get; set; } = "";
-
-    public string AlertType { get; set; } = string.Empty;
-    public int FieldId { get; set; }
-    public DateTime DetectedAt { get; set; }
-    public string Severity { get; set; } = "Medium"; // Low, Medium, High, Critical
+    Low,
+    Normal,
+    High,
+    Urgent
 }

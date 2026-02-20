@@ -406,6 +406,6 @@ Pressione F5
 
 ---
 
-## 👨‍💻 Autor
-
-**Frank Vieira** - 
+ ## ✍️ Autor
+- Frank Vieira
+- GitHub: @fkwesley

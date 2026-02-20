@@ -37,35 +37,59 @@ public class NotificationFunction
         ServiceBusReceivedMessage message,
         ServiceBusMessageActions messageActions)
     {
-        // Obtém CorrelationId com ordem de prioridade:
-        // 1. Campo nativo do AMQP message
-        // 2. Custom Properties
-        // 3. Metadata do body (será preenchido após deserialização)
+        // ===============================
+        // CORRELATION ID
+        // ===============================
         string? correlationId = message.CorrelationId;
 
         if (string.IsNullOrEmpty(correlationId) && message.ApplicationProperties.TryGetValue("CorrelationId", out var customCorrelationId))
             correlationId = customCorrelationId?.ToString();
 
-        // Define o CorrelationId no enricher para todos os logs subsequentes
         _correlationIdEnricher.SetCorrelationId(correlationId);
 
-        // Captura a transação atual do APM e adiciona labels
-        var currentTransaction = Agent.Tracer.CurrentTransaction;
-        if (currentTransaction != null)
-        {
-            currentTransaction.SetLabel("CorrelationId", correlationId ?? "N/A");
-            currentTransaction.SetLabel("MessageId", message.MessageId);
-            currentTransaction.SetLabel("DeliveryCount", message.DeliveryCount);
-        }
+        // ===============================
+        // DISTRIBUTED TRACING
+        // ===============================
+        var traceparent = message.ApplicationProperties.TryGetValue("traceparent", out var traceparentValue)
+            ? traceparentValue?.ToString() : null;
 
-        _logger.LogInformation(
-            "Processing message ID: {MessageId}, CorrelationId: {CorrelationId}", 
-            message.MessageId, 
-            correlationId ?? "N/A");
+        DistributedTracingData? distributedTracingData = null;
+
+        if (!string.IsNullOrWhiteSpace(traceparent))
+            distributedTracingData = DistributedTracingData.TryDeserializeFromString(traceparent);
+
+        var transaction = Agent.Tracer.StartTransaction(
+            "ProcessNotificationQueue",
+            ApiConstants.TypeMessaging,
+            distributedTracingData);
 
         try
         {
-            var notificationRequest = JsonSerializer.Deserialize<NotificationRequest>(message.Body.ToString());
+            transaction.SetLabel("CorrelationId", correlationId ?? "N/A");
+            transaction.SetLabel("MessageId", message.MessageId);
+
+            _logger.LogInformation(
+                "Processing message ID: {MessageId}, CorrelationId: {CorrelationId}",
+                message.MessageId,
+                correlationId ?? "N/A");
+
+            // ===============================
+            // PARSE MESSAGE SPAN
+            // ===============================
+            var notificationRequest =
+                await transaction.CaptureSpan(
+                    "Parse Service Bus Message",
+                    ApiConstants.TypeMessaging,
+                    async () =>
+                    {
+                        var request = JsonSerializer.Deserialize<NotificationRequest>(message.Body.ToString());
+
+                        Agent.Tracer.CurrentSpan?.SetLabel("MessageSize", message.Body.Length);
+                        Agent.Tracer.CurrentSpan?.SetLabel("EnqueuedTime", message.EnqueuedTime.ToString("O"));
+
+                        return request;
+                    },
+                    "azureservicebus");
 
             if (notificationRequest == null)
             {
@@ -73,17 +97,19 @@ public class NotificationFunction
                     "Failed to deserialize message body for message ID: {MessageId}, CorrelationId: {CorrelationId}", 
                     message.MessageId,
                     correlationId ?? "N/A");
+
                 await messageActions.DeadLetterMessageAsync(
-                    message, 
-                    deadLetterReason: "DeserializationError", 
-                    deadLetterErrorDescription: "Could not deserialize message body");
+                    message,
+                    deadLetterReason: "DeserializationError",
+                    deadLetterErrorDescription: "Could not deserialize message body",
+                    propertiesToModify: null);
+
                 return;
             }
 
-            // Fallback final: se não veio nem no message nem nas properties, pega do Metadata
-            correlationId ??= notificationRequest.Metadata?.CorrelationId;
-
-            // Validação
+            // ===============================
+            // VALIDATION
+            // ===============================
             var (isValid, errorReason, errorDescription) = ValidateNotificationRequest(notificationRequest);
 
             if (!isValid)
@@ -93,53 +119,49 @@ public class NotificationFunction
                     message.MessageId,
                     correlationId ?? "N/A",
                     errorReason);
+
                 await messageActions.DeadLetterMessageAsync(
-                    message, 
-                    deadLetterReason: errorReason!, 
-                    deadLetterErrorDescription: errorDescription!);
+                    message,
+                    deadLetterReason: errorReason!,
+                    deadLetterErrorDescription: errorDescription!,
+                    propertiesToModify: null);
+
                 return;
             }
 
-            // Processar template ou usar subject/body diretos
-            string subject, htmlBody;
+            // ===============================
+            // TEMPLATE PROCESSING
+            // ===============================
+            string subject;
+            string htmlBody;
 
-            if (!string.IsNullOrEmpty(notificationRequest.TemplateId))
+            if (!string.IsNullOrWhiteSpace(notificationRequest.TemplateId))
             {
-                // Usar template
-                _logger.LogInformation(
-                    "Processing notification with template: {TemplateId}, CorrelationId: {CorrelationId}",
-                    notificationRequest.TemplateId,
-                    correlationId ?? "N/A");
+                (subject, htmlBody) =
+                    await transaction.CaptureSpan(
+                        "Process Email Template",
+                        "template",
+                        async () =>
+                        {
+                            Agent.Tracer.CurrentSpan?.SetLabel(
+                                "TemplateId", notificationRequest.TemplateId);
 
-                try
-                {
-                    subject = _templateService.GetSubject(notificationRequest.TemplateId, notificationRequest.Parameters);
-                    htmlBody = _templateService.GetBody(notificationRequest.TemplateId, notificationRequest.Parameters);
-                }
-                catch (KeyNotFoundException ex)
-                {
-                    _logger.LogError(
-                        ex,
-                        "Template not found: {TemplateId}, MessageId: {MessageId}, CorrelationId: {CorrelationId}",
-                        notificationRequest.TemplateId,
-                        message.MessageId,
-                        correlationId ?? "N/A");
+                            var subj = _templateService.GetSubject(notificationRequest.TemplateId, notificationRequest.Parameters);
+                            var body = _templateService.GetBody(notificationRequest.TemplateId, notificationRequest.Parameters);
 
-                    await messageActions.DeadLetterMessageAsync(
-                        message,
-                        deadLetterReason: "TemplateNotFound",
-                        deadLetterErrorDescription: $"Template '{notificationRequest.TemplateId}' not found");
-                    return;
-                }
+                            return (subj, body);
+                        },
+                        "email-template");
             }
             else
             {
-                // Usar subject e body diretos (modo legado)
                 subject = notificationRequest.Subject!;
                 htmlBody = notificationRequest.Body!;
             }
 
-            // Converter NotificationRequest para EmailMessage
+            // ===============================
+            // EMAIL SENDING
+            // ===============================
             var emailMessage = new EmailMessage
             {
                 To = notificationRequest.EmailTo,
@@ -147,106 +169,96 @@ public class NotificationFunction
                 Bcc = notificationRequest.EmailBcc ?? new(),
                 Subject = subject,
                 HtmlContent = htmlBody,
-                CorrelationId = correlationId
+                CorrelationId = correlationId,
+                Priority = notificationRequest.Priority
             };
 
-            // Adiciona labels adicionais ao APM após deserialização
-            if (currentTransaction != null)
-            {
-                currentTransaction.SetLabel("AlertType", notificationRequest.Metadata?.AlertType ?? "N/A");
-                currentTransaction.SetLabel("Severity", notificationRequest.Metadata?.Severity ?? "N/A");
-                currentTransaction.SetLabel("FieldId", notificationRequest.Metadata?.FieldId ?? 0);
-                currentTransaction.SetLabel("RecipientCount", notificationRequest.EmailTo.Count);
-                currentTransaction.SetLabel("TemplateId", notificationRequest.TemplateId ?? "Direct");
-            }
+            transaction.SetLabel("RecipientCount", emailMessage.To.Count);
+            transaction.SetLabel("TemplateId", notificationRequest.TemplateId ?? "Direct");
 
-            _logger.LogInformation(
-                "Sending notification - Subject: {Subject}, Recipients: {RecipientCount}, " +
-                "AlertType: {AlertType}, Severity: {Severity}, FieldId: {FieldId}, CorrelationId: {CorrelationId}", 
-                subject,
-                notificationRequest.EmailTo.Count,
-                notificationRequest.Metadata?.AlertType ?? "N/A",
-                notificationRequest.Metadata?.Severity ?? "N/A",
-                notificationRequest.Metadata?.FieldId ?? 0,
-                correlationId ?? "N/A");
-
-            // Cria um span customizado para rastreamento do envio de email
-            if (Agent.Tracer.CurrentTransaction != null)
-            {
-                await Agent.Tracer.CurrentTransaction.CaptureSpan(
-                    "Send Email via ACS",
-                    ApiConstants.TypeExternal,
-                    async () => await _emailService.SendEmailAsync(emailMessage),
-                    ApiConstants.SubtypeHttp);
-            }
-            else
-            {
-                await _emailService.SendEmailAsync(emailMessage);
-            }
+            await transaction.CaptureSpan(
+                "Send Email via ACS",
+                ApiConstants.TypeExternal,
+                async () =>
+                {
+                    Agent.Tracer.CurrentSpan?.SetLabel("RecipientCount", emailMessage.To.Count);
+                    await _emailService.SendEmailAsync(emailMessage);
+                },
+                ApiConstants.SubtypeHttp);
 
             await messageActions.CompleteMessageAsync(message);
 
-            _logger.LogInformation(
-                "Successfully processed message ID: {MessageId}, CorrelationId: {CorrelationId}", 
-                message.MessageId,
-                correlationId ?? "N/A");
+            _logger.LogInformation("Successfully processed message ID: {MessageId}", message.MessageId);
         }
         catch (TooManyRequestsException ex)
         {
-            Agent.Tracer.CurrentTransaction?.CaptureError("Rate limit exceeded", ex.Message, new StackTrace(ex).GetFrames());
+            transaction.CaptureException(ex);
 
             _logger.LogWarning(
-                ex, 
-                "Rate limit exceeded for message ID: {MessageId}, CorrelationId: {CorrelationId}. Message will be retried.", 
+                ex,
+                "Rate limit exceeded for message ID: {MessageId}, CorrelationId: {CorrelationId}. Message will be retried.",
                 message.MessageId,
                 correlationId ?? "N/A");
+
             // Abandona a mensagem para que ela volte para a fila e seja reprocessada
             await messageActions.AbandonMessageAsync(message);
         }
         catch (JsonException ex)
         {
-            Agent.Tracer.CurrentTransaction?.CaptureException(ex);
+            transaction.CaptureException(ex);
 
-            _logger.LogError(
-                ex, 
-                "Invalid JSON format for message ID: {MessageId}, CorrelationId: {CorrelationId}", 
-                message.MessageId,
-                correlationId ?? "N/A");
             await messageActions.DeadLetterMessageAsync(
-                message, 
-                deadLetterReason: "InvalidJsonFormat", 
-                deadLetterErrorDescription: ex.Message);
+                message,
+                propertiesToModify: null,
+                deadLetterReason: "InvalidJsonFormat",
+                deadLetterErrorDescription: ex.Message,
+                cancellationToken: CancellationToken.None);
+
+            return;
+        }
+        catch (KeyNotFoundException ex)
+        {
+            transaction.CaptureException(ex);
+
+            await messageActions.DeadLetterMessageAsync(
+                message,
+                propertiesToModify: null,
+                deadLetterReason: "TemplateNotFound",
+                deadLetterErrorDescription: ex.Message,
+                cancellationToken: CancellationToken.None);
+
+            return;
         }
         catch (Exception ex)
         {
-            Agent.Tracer.CurrentTransaction?.CaptureException(ex);
+            transaction.CaptureException(ex);
 
             _logger.LogError(
-                ex, 
-                "Error processing message ID: {MessageId}, CorrelationId: {CorrelationId}", 
-                message.MessageId,
-                correlationId ?? "N/A");
-            // Em caso de erro genérico, abandona a mensagem para retry
-            await messageActions.AbandonMessageAsync(message);
+                ex,
+                "Error processing message ID: {MessageId}",
+                message.MessageId);
+
+            await messageActions.DeadLetterMessageAsync(message);
+        }
+        finally
+        {
+            transaction.End();
         }
     }
 
     private static (bool IsValid, string? ErrorReason, string? ErrorDescription) ValidateNotificationRequest(NotificationRequest request)
     {
         if (request.EmailTo == null || request.EmailTo.Count == 0)
-            return (false, "ValidationError", "No recipients specified in EmailTo");
+            return (false, "ValidationError", "No recipients specified");
 
-        // Validar que tem ou TemplateId ou Subject+Body
         if (string.IsNullOrWhiteSpace(request.TemplateId))
         {
-            // Modo legado: requer Subject e Body
             if (string.IsNullOrWhiteSpace(request.Subject))
-                return (false, "ValidationError", "Subject is required when TemplateId is not provided");
+                return (false, "ValidationError", "Subject required");
 
             if (string.IsNullOrWhiteSpace(request.Body))
-                return (false, "ValidationError", "Body is required when TemplateId is not provided");
+                return (false, "ValidationError", "Body required");
         }
-        // Se tem TemplateId, não precisa validar Subject/Body
 
         return (true, null, null);
     }

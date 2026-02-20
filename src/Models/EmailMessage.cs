@@ -25,4 +25,10 @@ public class EmailMessage
     /// Correlation ID for tracking
     /// </summary>
     public string? CorrelationId { get; set; }
+
+    /// <summary>
+    /// Notification priority level (Low, Normal, High, Urgent)
+    /// Maps to X-Priority and Importance email headers
+    /// </summary>
+    public PriorityEnum Priority { get; set; } = PriorityEnum.Normal;
 }

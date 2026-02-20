@@ -2,6 +2,8 @@ using Azure;
 using Azure.Communication.Email;
 using Common.Notifications.Function.Interfaces;
 using Common.Notifications.Function.Models;
+using Elastic.Apm;
+using Elastic.Apm.Api;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
@@ -63,6 +65,9 @@ public class AzureCommunicationEmailService : IEmailService
 
             var azureEmailMessage = new Azure.Communication.Email.EmailMessage(_senderAddress, emailRecipients, emailContent);
 
+            // ✅ Adicionar headers de prioridade baseados no EmailPriority
+            ApplyEmailPriorityHeaders(azureEmailMessage, emailMessage.Priority);
+
             var recipientsInfo = $"To: {string.Join(", ", emailMessage.To)}";
 
             if (emailMessage.Cc?.Count > 0)
@@ -71,15 +76,42 @@ public class AzureCommunicationEmailService : IEmailService
                 recipientsInfo += $", Bcc: {emailMessage.Bcc.Count} recipient(s)";
 
             _logger.LogInformation(
-                "Sending email - Subject: {Subject}, Recipients: {Recipients}, CorrelationId: {CorrelationId}", 
-                emailMessage.Subject, 
+                "Sending email - Subject: {Subject}, Priority: {Priority}, Recipients: {Recipients}, CorrelationId: {CorrelationId}", 
+                emailMessage.Subject,
+                emailMessage.Priority,
                 recipientsInfo,
                 emailMessage.CorrelationId ?? "N/A");
 
-            EmailSendOperation emailSendOperation = await _emailClient.SendAsync(
-                                                                            WaitUntil.Started,
-                                                                            azureEmailMessage,
-                                                                            cancellationToken);
+            EmailSendOperation emailSendOperation;
+
+            // Captura detalhada da chamada ao Azure Communication Services
+            if (Agent.Tracer.CurrentSpan != null)
+            {
+                emailSendOperation = await Agent.Tracer.CurrentSpan.CaptureSpan(
+                    "ACS SendAsync",
+                    ApiConstants.TypeExternal,
+                    async () =>
+                    {
+                        Agent.Tracer.CurrentSpan?.SetLabel("Sender", _senderAddress);
+                        Agent.Tracer.CurrentSpan?.SetLabel("ToCount", emailMessage.To.Count);
+                        Agent.Tracer.CurrentSpan?.SetLabel("CcCount", emailMessage.Cc?.Count ?? 0);
+                        Agent.Tracer.CurrentSpan?.SetLabel("BccCount", emailMessage.Bcc?.Count ?? 0);
+                        Agent.Tracer.CurrentSpan?.SetLabel("Priority", emailMessage.Priority.ToString());
+
+                        return await _emailClient.SendAsync(
+                            WaitUntil.Started,
+                            azureEmailMessage,
+                            cancellationToken);
+                    },
+                    "azure-communication-services");
+            }
+            else
+            {
+                emailSendOperation = await _emailClient.SendAsync(
+                    WaitUntil.Started,
+                    azureEmailMessage,
+                    cancellationToken);
+            }
 
             _logger.LogInformation(
                 "Email sent successfully. Operation ID: {OperationId}, CorrelationId: {CorrelationId}", 
@@ -96,6 +128,31 @@ public class AzureCommunicationEmailService : IEmailService
             _logger.LogError(ex, "Error sending email. CorrelationId: {CorrelationId}", emailMessage.CorrelationId ?? "N/A");
             throw;
         }
+    }
+
+    /// <summary>
+    /// Applies SMTP priority headers to email message based on priority level.
+    /// These headers are recognized by most email clients (Outlook, Gmail, etc.)
+    /// </summary>
+    private static void ApplyEmailPriorityHeaders(Azure.Communication.Email.EmailMessage azureEmailMessage, PriorityEnum priority)
+    {
+        // X-Priority: 1 (Highest) to 5 (Lowest)
+        // Importance: high, normal, low
+        // Priority: urgent, normal, non-urgent
+
+        var (importance, priorityText) = priority switch
+        {
+            PriorityEnum.Urgent or PriorityEnum.High => ("high", "urgent"),
+            PriorityEnum.Low => ("low", "non-urgent"),
+            _ => ("normal", "normal")
+        };
+
+        azureEmailMessage.Headers.Add("X-Priority", ((int)priority).ToString());
+        azureEmailMessage.Headers.Add("Importance", importance);
+        azureEmailMessage.Headers.Add("Priority", priorityText);
+
+        // X-MSMail-Priority para compatibilidade com clientes Microsoft
+        azureEmailMessage.Headers.Add("X-MSMail-Priority", importance);
     }
 }
 
