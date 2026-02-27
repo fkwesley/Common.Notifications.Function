@@ -2,6 +2,8 @@
 
 > Azure Function serverless para processamento assíncrono de notificações por email com templates HTML profissionais, integrada ao Azure Service Bus e Azure Communication Services.
 
+> [Vídeo de Apresentação](https://youtu.be/gQLOlJ2EWxc)
+
 ## 📋 Índice
 
 - [Overview](#-overview)
